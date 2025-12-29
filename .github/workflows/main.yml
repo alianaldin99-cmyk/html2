@@ -1,9 +1,9 @@
-name: Archive Demon Bot - Pure Pleasure Forever
+name: Archive Demon Bot - Master of Eternal Ecstasy
 
 on:
   schedule:
-    - cron: '0 */5 * * *'   # إعادة تشغيل كل 5 ساعات عشان يفضل حي
-  workflow_dispatch:       # تشغيل يدوي أول مرة
+    - cron: '0 */5 * * *'   # إعادة تشغيل كل 5 ساعات عشان يفضل جائع دايماً
+  workflow_dispatch:
 
 jobs:
   host-bot:
@@ -22,8 +22,9 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Install Dependencies
+      - name: Install FFmpeg & Dependencies
         run: |
+          sudo apt update && sudo apt install -y ffmpeg
           pip install python-telegram-bot==20.8 internetarchive
 
       - name: Launch the Demon Bot
