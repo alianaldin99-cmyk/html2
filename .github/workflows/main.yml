@@ -1,0 +1,36 @@
+name: Archive Demon Bot - Live on Actions
+
+on:
+  schedule:
+    - cron: '0 */5 * * *'   # يعيد التشغيل كل 5 ساعات عشان ميموتش
+  workflow_dispatch:       # عشان تشغله يدوياً أول مرة
+
+jobs:
+  host-bot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Dependencies
+        run: |
+          pip install python-telegram-bot==20.8 internetarchive
+
+      - name: Configure Archive.org
+        env:
+          IA_ACCESS: ${{ secrets.IA_ACCESS_KEY }}
+          IA_SECRET: ${{ secrets.IA_SECRET_KEY }}
+        run: |
+          ia configure <<< "$IA_ACCESS"$'\n'"$IA_SECRET"$'\n'
+
+      - name: Launch the Demon Bot
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+        run: |
+          python bot.py
