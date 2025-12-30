@@ -27,8 +27,10 @@ jobs:
 
       - name: تسجيل البث
         run: |
-          DURATION_SECONDS=$((${inputs.duration_minutes} * 60))
-          OUTPUT="record_$(date +%Y%m%d_%H%M%S).ts"  # .ts أفضل لـ m3u8
+          MINUTES="${{ inputs.duration_minutes }}"
+          DURATION_SECONDS=$(( MINUTES * 60 ))
+
+          OUTPUT="record_$(date +%Y%m%d_%H%M%S).ts"
 
           ffmpeg -i "${{ inputs.m3u8_url }}" \
             -t "$DURATION_SECONDS" \
@@ -75,6 +77,4 @@ jobs:
           echo "رابط العرض : https://archive.org/details/${{ env.identifier }}"
           echo "رابط التحميل : https://archive.org/download/${{ env.identifier }}/${{ env.output_file }}"
           echo "══════════════════════════════════════════════════════"
-          echo ""
-          echo "ملاحظة: التسجيلات الطويلة (>90 دقيقة) قد تواجه مشاكل في الاستقرار"
-          echo "وقد يستغرق ظهور الفيديو كاملاً 10–60 دقيقة بعد الرفع"
+          echo "ملاحظة: التسجيلات الطويلة قد تواجه مشاكل في الاستقرار، والفيديو قد يستغرق 10–60 دقيقة للظهور كاملاً"
