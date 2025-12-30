@@ -28,8 +28,10 @@ jobs:
 
     - name: تسجيل البث
       run: |
-        # حساب الثواني بشكل آمن
+        # ────────────────────────────────
+        # هنا الحساب الصحيح (الطريقة الوحيدة المضمونة)
         DURATION_SECONDS=\( (( \){{ inputs.duration_minutes }} * 60 ))
+        # ────────────────────────────────
 
         OUTPUT="record_$(date +%Y%m%d_%H%M%S).mp4"
 
@@ -55,7 +57,6 @@ jobs:
         IA_ACCESS_KEY: ${{ secrets.IA_ACCESS_KEY }}
         IA_SECRET_KEY: ${{ secrets.IA_SECRET_KEY }}
       run: |
-        # تثبيت أداة ia إذا لم تكن موجودة
         curl -sL https://archive.org/install.sh | bash
 
         IDENTIFIER="record-\( (date +%Y%m%d-%H%M%S)- \){{ github.run_id }}"
@@ -85,6 +86,3 @@ jobs:
         echo "رابط العرض     : https://archive.org/details/${{ env.identifier }}"
         echo "رابط التحميل   : https://archive.org/download/\( {{ env.identifier }}/ \){{ env.output_file }}"
         echo "══════════════════════════════════════════════════════"
-        echo ""
-        echo "ملاحظة: التسجيلات الطويلة (>90–120 دقيقة) قد تواجه مشاكل"
-        echo "        قد يستغرق ظهور الفيديو كاملاً بعد الرفع 10–60 دقيقة"
