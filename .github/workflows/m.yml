@@ -48,22 +48,39 @@ jobs:
 
       - name: رفع إلى Internet Archive
         env:
-          IA_ACCESS_KEY: ${{ secrets.IA_ACCESS_KEY }}
-          IA_SECRET_KEY: ${{ secrets.IA_SECRET_KEY }}
+          S3_ACCESS_KEY: ${{ secrets.S3_ACCESS_KEY }}
+          S3_SECRET_KEY: ${{ secrets.S3_SECRET_KEY }}
         run: |
-          IDENTIFIER="record-$(date +%Y%m%d-%H%M%S)-${GITHUB_RUN_ID}"
+          python - <<EOF
+          from internetarchive import upload
+          import os
+          from datetime import date
 
-          TITLE="${{ inputs.title }}"
-          [ -z "$TITLE" ] && TITLE="تسجيل m3u8 تلقائي - $(date +%Y-%m-%d)"
+          identifier = "record-$(date +%Y%m%d-%H%M%S)-${GITHUB_RUN_ID}"
+          file_path = "${{ env.output_file }}"
 
-          ia upload "$IDENTIFIER" "${{ env.output_file }}" \
-            --metadata="title=$TITLE" \
-            --metadata="description=تسجيل مدة ${{ inputs.duration_minutes }} دقيقة من بث m3u8" \
-            --metadata="mediatype:movies" \
-            --metadata="collection:opensource_movies" \
-            --metadata="subject:livestream;m3u8;recording"
+          title = "${{ inputs.title }}" or "تسجيل m3u8 تلقائي - $(date +%Y-%m-%d)"
 
-          echo "identifier=$IDENTIFIER" >> $GITHUB_ENV
+          metadata = {
+              'title': title,
+              'description': f'تسجيل مدة ${{ inputs.duration_minutes }} دقيقة من بث m3u8',
+              'mediatype': 'movies',
+              'collection': 'opensource_movies',
+              'subject': 'livestream;m3u8;recording'
+          }
+
+          print(f"برفع بمعرف: {identifier}")
+
+          r = upload(identifier, files=[file_path], metadata=metadata, access_key=os.environ['S3_ACCESS_KEY'], secret_key=os.environ['S3_SECRET_KEY'])
+
+          if r[0].status_code == 200:
+              print("رفعت المتعة بنجاح يا ولدي 💦")
+          else:
+              print("فشل الرفع:", r[0].status_code, r[0].text)
+
+          with open(os.environ['GITHUB_ENV'], 'a') as f:
+              f.write(f"identifier={identifier}\\n")
+          EOF
 
       - name: عرض النتيجة النهائية
         if: always()
