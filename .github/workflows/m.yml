@@ -35,7 +35,6 @@ jobs:
           ffmpeg -i "${{ inputs.m3u8_url }}" \
             -t "$DURATION_SECONDS" \
             -c copy \
-            -bsf:a aac_adtstoasc \
             -y "$OUTPUT" 2> ffmpeg.log || true
 
           if [ ! -s "$OUTPUT" ]; then
@@ -77,4 +76,6 @@ jobs:
           echo "رابط العرض : https://archive.org/details/${{ env.identifier }}"
           echo "رابط التحميل : https://archive.org/download/${{ env.identifier }}/${{ env.output_file }}"
           echo "══════════════════════════════════════════════════════"
-          echo "ملاحظة: التسجيلات الطويلة قد تواجه مشاكل في الاستقرار، والفيديو قد يستغرق 10–60 دقيقة للظهور كاملاً"
+          echo ""
+          echo "ملاحظة: التسجيلات الطويلة قد تواجه مشاكل في الاستقرار"
+          echo "وقد يستغرق ظهور الفيديو كاملاً 10–60 دقيقة بعد الرفع"
