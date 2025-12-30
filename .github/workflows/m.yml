@@ -1,4 +1,4 @@
-name: Record m3u8 → Internet Archive
+name: Record m3u8 → Internet Archive (Headers Fix)
 
 on:
   workflow_dispatch:
@@ -8,7 +8,7 @@ on:
         required: true
         type: string
       duration_minutes:
-        description: 'مدة التسجيل بالدقائق (5–360 دقيقة)'
+        description: 'مدة التسجيل بالدقائق (5–180 دقيقة)'
         required: true
         type: number
         default: 10
@@ -29,79 +29,89 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y ffmpeg curl jq
 
-      - name: تسجيل البث
+      - name: تسجيل البث مع هيدرز قوية
         run: |
-          # حساب الثواني بشكل آمن وصحيح
+          # حساب الثواني
           DURATION_SECONDS=\( (( \){{ inputs.duration_minutes }} * 60 ))
 
+          # اسم الملف
           OUTPUT="record_$(date +%Y%m%d_%H%M%S).mp4"
 
-          echo "جاري تسجيل مدة \( DURATION_SECONDS ثانية ( \){{ inputs.duration_minutes }} دقيقة)"
-          echo "الملف الناتج: $OUTPUT"
+          # هيدرز موسعة (أكثر ما ينجح مع السيرفرات المقيدة)
+          HEADERS="User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36\r\n\
+Referer: https://thksmom.shop/\r\n\
+Origin: https://thksmom.shop\r\n\
+Accept: */*\r\n\
+Accept-Language: en-US,en;q=0.9\r\n\
+Connection: keep-alive\r\n"
 
-          ffmpeg -i "${{ inputs.m3u8_url }}" \
+          echo "جاري المحاولة لتسجيل → $DURATION_SECONDS ثانية"
+          echo "رابط: ${{ inputs.m3u8_url }}"
+
+          # الأمر الرئيسي مع هيدرز + خيارات إضافية للاستقرار
+          ffmpeg \
+            -headers "$HEADERS" \
+            -http_persistent 1 \
+            -timeout 60000000 \
+            -i "${{ inputs.m3u8_url }}" \
             -t "$DURATION_SECONDS" \
             -c copy \
             -bsf:a aac_adtstoasc \
-            -y "$OUTPUT" 2> ffmpeg.log || true
+            -copyts \
+            -y "$OUTPUT" > ffmpeg_out.log 2> ffmpeg_err.log || true
 
+          # فحص + طباعة تفصيلية للأخطاء
           if [ ! -s "$OUTPUT" ]; then
-            echo "======================================"
-            echo "فشل التسجيل - حجم الملف صفر"
-            echo "محتوى ffmpeg.log:"
-            cat ffmpeg.log
-            echo "======================================"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "           فشل التسجيل - الملف فارغ"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "----- Last 30 lines of error log -----"
+            tail -n 30 ffmpeg_err.log
+            echo ""
+            echo "----- Last 10 lines of output log -----"
+            tail -n 10 ffmpeg_out.log
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
             exit 1
           fi
 
-          echo "التسجيل تم بنجاح"
+          echo "التسجيل نجح ✓ الحجم: $(du -h "$OUTPUT" | cut -f1)"
           echo "output_file=$OUTPUT" >> $GITHUB_ENV
           echo "size_mb=$(du -m "$OUTPUT" | cut -f1)" >> $GITHUB_ENV
           echo "duration_min=${{ inputs.duration_minutes }}" >> $GITHUB_ENV
 
       - name: رفع الملف إلى Internet Archive
+        if: success()
         env:
           IA_ACCESS_KEY: ${{ secrets.IA_ACCESS_KEY }}
           IA_SECRET_KEY: ${{ secrets.IA_SECRET_KEY }}
         run: |
-          # تثبيت أداة ia
           curl -sL https://archive.org/install.sh | bash || true
 
-          # إنشاء معرف فريد
           IDENTIFIER="record-\( (date +%Y%m%d-%H%M%S)- \){{ github.run_id }}"
 
           TITLE="${{ inputs.title }}"
-          [ -z "\( TITLE" ] && TITLE="تسجيل m3u8 تلقائي - \)(date +%Y-%m-%d)"
-
-          echo "جاري الرفع إلى Internet Archive..."
-          echo "المعرف: $IDENTIFIER"
+          [ -z "\( TITLE" ] && TITLE="تسجيل m3u8 - \)(date +%Y-%m-%d)"
 
           ia upload "$IDENTIFIER" \
             "${{ env.output_file }}" \
             --metadata="title=$TITLE" \
-            --metadata="description=تسجيل مدة ${{ env.duration_min }} دقيقة من بث m3u8" \
+            --metadata="description=تسجيل مدة ${{ env.duration_min }} دقيقة" \
             --metadata="mediatype:movie" \
             --metadata="collection:opensource_movies" \
-            --metadata="subject:livestream;m3u8;recording" \
             --retries=3 || true
 
           echo "identifier=$IDENTIFIER" >> $GITHUB_ENV
 
-      - name: عرض النتيجة النهائية
+      - name: عرض النتيجة
         if: always()
         run: |
           echo ""
-          echo "═══════════════════════════════════════════════════════════"
-          echo "              النتيجة النهائية للوظيفة"
-          echo "═══════════════════════════════════════════════════════════"
-          echo "الحجم           : ${{ env.size_mb || 'غير متوفر' }} MB"
-          echo "المدة           : ${{ env.duration_min || 'غير متوفر' }} دقيقة"
-          echo "اسم الملف       : ${{ env.output_file || 'غير متوفر' }}"
-          echo "المعرف          : ${{ env.identifier || 'غير متوفر' }}"
+          echo "════════════════════════════════════════════════════════════"
+          echo "                   النتيجة النهائية"
+          echo "════════════════════════════════════════════════════════════"
+          echo "الحجم          : ${{ env.size_mb || 'غير متوفر' }} MB"
+          echo "المدة          : ${{ env.duration_min || 'غير متوفر' }} دقيقة"
+          echo "المعرف         : ${{ env.identifier || 'غير متوفر' }}"
           echo ""
-          echo "رابط صفحة العرض : https://archive.org/details/${{ env.identifier || 'غير متوفر' }}"
-          echo "رابط التحميل    : https://archive.org/download/\( {{ env.identifier || 'غير متوفر' }}/ \){{ env.output_file || 'غير متوفر' }}"
-          echo "═══════════════════════════════════════════════════════════"
-          echo ""
-          echo "ملاحظة: قد يستغرق ظهور الفيديو بشكل كامل 5-60 دقيقة"
-          echo "        بعد اكتمال الرفع"
+          echo "رابط العرض     : https://archive.org/details/${{ env.identifier || 'غير متوفر' }}"
+          echo "════════════════════════════════════════════════════════════"
