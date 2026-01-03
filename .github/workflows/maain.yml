@@ -1,14 +1,55 @@
-name: Test Telegram Bot
+name: Record m3u8 → Telegram
 
 on:
   workflow_dispatch:
+    inputs:
+      m3u8_url:
+        description: 'رابط m3u8'
+        required: true
+      duration_minutes:
+        description: 'مدة التسجيل بالدقائق (5–360)'
+        required: true
+        default: '10'
+      title:
+        description: 'عنوان التسجيل (اختياري)'
+        required: false
+        default: 'تسجيل بث مباشر'
 
 jobs:
-  test-telegram:
+  record-and-upload:
     runs-on: ubuntu-latest
+    timeout-minutes: 360
     steps:
-      - name: Send test message to Telegram
+      - name: تثبيت ffmpeg
         run: |
-          curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
-          -d chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" \
-          -d text="✅ تم الاتصال بالقناة بنجاح – البوت يعمل"
+          sudo apt update && sudo apt install -y ffmpeg
+
+      - name: تسجيل البث وتحويله إلى MP4
+        run: |
+          MINUTES="${{ inputs.duration_minutes }}"
+          DURATION=$(( MINUTES * 60 ))
+
+          TITLE="${{ inputs.title }}"
+          OUTPUT_FILE="recorded_stream.mp4"
+
+          echo "📹 تسجيل البث لمدة $MINUTES دقيقة..."
+          ffmpeg -y -i "${{ inputs.m3u8_url }}" -c copy -t "$DURATION" "$OUTPUT_FILE"
+          echo "✅ تم التسجيل: $OUTPUT_FILE"
+
+      - name: رفع الفيديو إلى قناة Telegram
+        run: |
+          echo "📤 رفع الفيديو إلى قناة Telegram..."
+          curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendVideo" \
+            -F chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" \
+            -F video=@"recorded_stream.mp4" \
+            -F caption="$TITLE"
+          echo "✅ تم رفع الفيديو بنجاح"
+
+      - name: عرض النتيجة
+        run: |
+          echo "════════════════════════════════"
+          echo "تم تسجيل البث وتحويله إلى MP4"
+          echo "عنوان التسجيل: ${{ inputs.title }}"
+          echo "مدة التسجيل: ${{ inputs.duration_minutes }} دقيقة"
+          echo "الفيديو مرفوع على القناة"
+          echo "════════════════════════════════"
