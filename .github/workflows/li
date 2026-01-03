@@ -1,5 +1,5 @@
-- name: Test Telegram message
+- name: Test Telegram Channel
   run: |
-    curl -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
+    curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
       -d chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" \
-      -d text="✅ البوت يعمل وتم الاتصال بالقناة بنجاح"
+      -d text="✅ تم الاتصال بالقناة بنجاح – البوت يعمل"
