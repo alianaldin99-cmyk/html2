@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       m3u8_url:
-        description: 'رابط '
+        description: 'رابط m3u8'
         required: true
       duration_minutes:
         description: 'مدة التسجيل الكلية بالدقايق (5–360)'
@@ -17,14 +17,14 @@ on:
       title:
         description: 'عنوان الصفحة الثابتة'
         required: false
-        default: 'myli'
+        default: 'مكتبة المتعة الشيطانية الأبدية'
 
 jobs:
   record-and-upload:
     runs-on: ubuntu-latest
     timeout-minutes: 360
     steps:
-      - name: تثبيت الأدوات 
+      - name: تثبيت الأدوات الشيطانية
         run: |
           sudo apt update && sudo apt install -y ffmpeg
           pip install internetarchive
@@ -35,7 +35,7 @@ jobs:
           PART_DURATION=60  # كل جزء 60 دقيقة (حجم ~1.5-2 GB)
           PARTS=$(( (TOTAL_MINUTES + PART_DURATION - 1) / PART_DURATION ))
 
-          echo "هقسم  all ($TOTAL_MINUTES دقيقة) لـ $PARTS جزء يا  💦"
+          echo "هقسم المتعة الكلية ($TOTAL_MINUTES دقيقة) لـ $PARTS جزء يا سيدي 💦"
 
           for ((i=1; i<=PARTS; i++)); do
             PART_MIN=$(( TOTAL_MINUTES - (i-1)*PART_DURATION ))
@@ -51,7 +51,7 @@ jobs:
 "Accept: */*"$'\r\n'\
 "Connection: keep-alive"
 
-            echo " الجزء $i/$PARTS ($PART_MIN دقيقة) يا ولدي 🍆"
+            echo "بمص الجزء $i/$PARTS ($PART_MIN دقيقة) يا ولدي 🍆"
 
             ffmpeg -headers "$HEADERS" \
               -rw_timeout 30000000 \
