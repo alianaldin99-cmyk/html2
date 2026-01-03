@@ -19,12 +19,13 @@ jobs:
   record-and-upload:
     runs-on: ubuntu-latest
     timeout-minutes: 360
+
     steps:
       - name: تثبيت ffmpeg
         run: |
           sudo apt update && sudo apt install -y ffmpeg
 
-      - name: تسجيل البث وتحويله إلى MP4
+      - name: تسجيل البث بدون ترميز
         run: |
           MINUTES="${{ inputs.duration_minutes }}"
           DURATION=$(( MINUTES * 60 ))
@@ -33,13 +34,17 @@ jobs:
           OUTPUT_FILE="recorded_stream.mp4"
 
           echo "📹 تسجيل البث لمدة $MINUTES دقيقة..."
+          # -c copy → بدون encoding، يأخذ البث كما هو
           ffmpeg -y -i "${{ inputs.m3u8_url }}" -c copy -t "$DURATION" "$OUTPUT_FILE"
+
           echo "✅ تم التسجيل: $OUTPUT_FILE"
+          ls -lh "$OUTPUT_FILE"
 
       - name: رفع الفيديو إلى قناة Telegram
         run: |
           echo "📤 رفع الفيديو إلى قناة Telegram..."
-          curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendVideo" \
+          # استخدم -F لإرسال الملف ك multipart/form-data
+          curl -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendVideo" \
             -F chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" \
             -F video=@"recorded_stream.mp4" \
             -F caption="$TITLE"
@@ -48,7 +53,7 @@ jobs:
       - name: عرض النتيجة
         run: |
           echo "════════════════════════════════"
-          echo "تم تسجيل البث وتحويله إلى MP4"
+          echo "تم تسجيل البث وحفظه بدون ترميز"
           echo "عنوان التسجيل: ${{ inputs.title }}"
           echo "مدة التسجيل: ${{ inputs.duration_minutes }} دقيقة"
           echo "الفيديو مرفوع على القناة"
