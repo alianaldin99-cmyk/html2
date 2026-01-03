@@ -1,4 +1,4 @@
-name: Record m3u8 → Internet Archive (Auto-Split + One Page)
+name: Record m3u8 → Internet Archive (Headers Fix)
 
 on:
   workflow_dispatch:
@@ -6,72 +6,71 @@ on:
       m3u8_url:
         description: 'رابط m3u8'
         required: true
+        type: string
       duration_minutes:
-        description: 'مدة التسجيل الكلية بالدقايق (5–360)'
+        description: 'مدة التسجيل بالدقائق (5–180 دقيقة)'
         required: true
-        default: 180
-      identifier:
-        description: 'المعرف الثابت على archive.org (كل التسجيلات هتترفع هنا)'
-        required: true
-        default: 'my-eternal-ecstasy-collection'
+        type: number
+        default: 10
       title:
-        description: 'عنوان الصفحة الثابتة'
+        description: 'عنوان التسجيل (اختياري)'
         required: false
-        default: 'مكتبة المتعة الشيطانية الأبدية'
+        type: string
+        default: 'تسجيل بث مباشر'
 
 jobs:
   record-and-upload:
     runs-on: ubuntu-latest
     timeout-minutes: 360
     steps:
-      - name: تثبيت الأدوات الشيطانية
+      - name: تثبيت الأدوات اللازمة
         run: |
-          sudo apt update && sudo apt install -y ffmpeg
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg curl jq
           pip install internetarchive
 
-      - name: تسجيل البث بأجزاء (Auto-Split)
+      - name: تسجيل البث مع هيدرز قوية
         run: |
-          TOTAL_MINUTES="${{ inputs.duration_minutes }}"
-          PART_DURATION=60  # كل جزء 60 دقيقة (حجم ~1.5-2 GB)
-          PARTS=$(( (TOTAL_MINUTES + PART_DURATION - 1) / PART_DURATION ))
+          # حساب الثواني صح بدون أي خطأ syntax
+          MINUTES="${{ inputs.duration_minutes }}"
+          DURATION_SECONDS=$(( MINUTES * 60 ))
 
-          echo "هقسم المتعة الكلية ($TOTAL_MINUTES دقيقة) لـ $PARTS جزء يا سيدي 💦"
+          OUTPUT="record_$(date +%Y%m%d_%H%M%S).ts"
 
-          for ((i=1; i<=PARTS; i++)); do
-            PART_MIN=$(( TOTAL_MINUTES - (i-1)*PART_DURATION ))
-            PART_MIN=$(( PART_MIN > PART_DURATION ? PART_DURATION : PART_MIN ))
-            PART_SEC=$(( PART_MIN * 60 ))
-
-            REMOTE_NAME="part${i}.ts"
-            OUTPUT="$REMOTE_NAME"
-
-            HEADERS="User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"$'\r\n'\
+          HEADERS="User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"$'\r\n'\
 "Referer: https://thksmom.shop/"$'\r\n'\
 "Origin: https://thksmom.shop"$'\r\n'\
 "Accept: */*"$'\r\n'\
+"Accept-Language: en-US,en;q=0.9"$'\r\n'\
 "Connection: keep-alive"
 
-            echo "بمص الجزء $i/$PARTS ($PART_MIN دقيقة) يا ولدي 🍆"
+          echo "جاري مص المتعة لـ $MINUTES دقيقة مع هيدرز شيطانية 💦"
 
-            ffmpeg -headers "$HEADERS" \
-              -rw_timeout 30000000 \
-              -reconnect 1 \
-              -reconnect_streamed 1 \
-              -reconnect_delay_max 10 \
-              -i "${{ inputs.m3u8_url }}" \
-              -t "$PART_SEC" \
-              -c copy \
-              -y "$OUTPUT" || true
+          ffmpeg -headers "$HEADERS" \
+            -http_persistent 1 \
+            -timeout 60000000 \
+            -i "${{ inputs.m3u8_url }}" \
+            -t "$DURATION_SECONDS" \
+            -c copy \
+            -y "$OUTPUT" > ffmpeg_out.log 2> ffmpeg_err.log || true
 
-            if [ -s "$OUTPUT" ] && [ $(stat -c%s "$OUTPUT") -gt 1048576 ]; then
-              echo "نجحت في مص الجزء $i ✓ الحجم: $(du -h "$OUTPUT" | cut -f1)"
-              echo "part${i}_file=$OUTPUT" >> $GITHUB_ENV
-            else
-              echo "فشل الجزء $i... هكمل الباقي"
-            fi
-          done
+          if [ ! -s "$OUTPUT" ]; then
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo " فشل التسجيل - الملف فارغ"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            tail -n 30 ffmpeg_err.log
+            tail -n 10 ffmpeg_out.log
+            exit 1
+          fi
 
-      - name: رفع الأجزاء على الصفحة الثابتة (One Page)
+          echo "التسجيل نجح ✓ الحجم: $(du -h "$OUTPUT" | cut -f1)"
+
+          echo "output_file=$OUTPUT" >> $GITHUB_ENV
+          echo "size_mb=$(du -m "$OUTPUT" | cut -f1)" >> $GITHUB_ENV
+          echo "duration_min=${{ inputs.duration_minutes }}" >> $GITHUB_ENV
+
+      - name: رفع الملف إلى Internet Archive
+        if: success()
         env:
           S3_ACCESS_KEY: ${{ secrets.S3_ACCESS_KEY }}
           S3_SECRET_KEY: ${{ secrets.S3_SECRET_KEY }}
@@ -79,49 +78,45 @@ jobs:
           python - <<EOF
           from internetarchive import upload
           import os
+          from datetime import datetime
 
-          identifier = "${{ inputs.identifier }}"
+          identifier = "record-$(date +%Y%m%d-%H%M%S)-${GITHUB_RUN_ID}"
 
-          title = "${{ inputs.title }}" if "${{ inputs.title }}" else "مكتبة المتعة الشيطانية الأبدية"
+          title = "${{ inputs.title }}" if "${{ inputs.title }}" else "تسجيل بث مباشر - $(date +%Y-%m-%d)"
 
           metadata = {
               'title': title,
-              'description': 'كل التسجيلات في صفحة واحدة أبدية - مقسمة لأجزاء للرفع الأسرع 🍆💦',
+              'description': f'تسجيل مدة ${{ inputs.duration_minutes }} دقيقة مع هيدرز قوية',
               'mediatype': 'movies',
               'collection': 'opensource_movies',
-              'subject': 'livestream;m3u8;split;one-page;eternal-ecstasy'
+              'subject': 'livestream;m3u8;recording'
           }
 
-          files = []
-          for key in os.environ:
-              if key.startswith('part') and key.endswith('_file'):
-                  files.append(os.environ[key])
+          file_path = "${{ env.output_file }}"
 
-          if not files:
-              print("مافيش أجزاء اتحفظت يا سيدي...")
-              exit(1)
+          print(f"برفع المتعة بمعرف: {identifier}")
 
-          print(f"برفع {len(files)} جزء على الصفحة الثابتة: {identifier}")
-
-          r = upload(identifier, files=files, metadata=metadata, retries=10, verbose=True)
+          r = upload(identifier, files=[file_path], metadata=metadata, retries=10)
 
           if any(resp.status_code == 200 for resp in r):
-              print("أضفت كل الأجزاء للمكتبة الأبدية بنجاح يا ولدي 💉")
+              print("رفعت المتعة بنجاح يا ولدي 🍆💦")
           else:
-              print("فشل رفع بعض الأجزاء... جرب تاني")
+              print("فشل مؤقت:", r)
 
+          with open(os.environ['GITHUB_ENV'], 'a') as f:
+              f.write(f"identifier={identifier}\\n")
           EOF
 
-      - name: النشوة الأبدية في صفحة واحدة يا سيدي
+      - name: عرض النتيجة
         if: always()
         run: |
           echo ""
-          echo "══════════════════════════════════════════════════════════"
-          echo "كل المتعة في صفحة واحدة أبدية يا ولدي"
-          echo "══════════════════════════════════════════════════════════"
-          echo "المعرف الثابت : ${{ inputs.identifier }}"
-          echo "رابط الصفحة الكاملة : https://archive.org/details/${{ inputs.identifier }}"
-          echo "كل التسجيلات الجديدة هتترفع هنا تلقائي"
-          echo "الرفع مقسم → أسرع ومضمون 100%"
-          echo "══════════════════════════════════════════════════════════"
-          echo "المتعة تكبر وتكبر في نفس الصفحة... استمتع بيها متى ما تحب 🍆🍆🍆💦💦💦"
+          echo "════════════════════════════════════════════════════════════"
+          echo " النتيجة النهائية يا سيدي"
+          echo "════════════════════════════════════════════════════════════"
+          echo "الحجم : ${{ env.size_mb || 'غير متوفر' }} MB"
+          echo "المدة : ${{ env.duration_min || 'غير متوفر' }} دقيقة"
+          echo "المعرف : ${{ env.identifier || 'غير متوفر' }}"
+          echo ""
+          echo "رابط العرض : https://archive.org/details/${{ env.identifier || 'غير متوفر' }}"
+          echo "════════════════════════════════════════════════════════════"
