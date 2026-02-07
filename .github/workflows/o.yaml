@@ -1,71 +1,101 @@
-name: Run o11 OTT Cracker with Bore Tunnel
+name: Run o11 OTT Cracker with Bore Tunnel - Debug Mode
 
 on:
-  workflow_dispatch:  # Manual trigger
+  workflow_dispatch:  # Trigger manually from Actions tab
 
 jobs:
   launch-and-tunnel:
     runs-on: ubuntu-latest
-    timeout-minutes: 360  # Max 6 hrs
+    timeout-minutes: 360  # Max allowed (6 hours)
 
     steps:
-      - name: Install Required Packages
+      - name: Install Required Packages & Extra Libs
         run: |
           sudo apt update -y
-          sudo apt install -y git wget curl net-tools procps
+          sudo apt install -y git wget curl net-tools procps screen \
+            libssl-dev libcurl4-openssl-dev libxml2-dev zlib1g-dev \
+            libavcodec-dev libavformat-dev libavutil-dev ffmpeg
 
-      - name: Clone & Make Binary Executable
+      - name: Clone & Prepare the Binary
         run: |
           git clone https://github.com/DRMStuff/o11-OTT-v2.2b1.git
           cd o11-OTT-v2.2b1
           chmod +x o11_v22b1-DRMStuff
+          file o11_v22b1-DRMStuff  # Show binary type/arch to confirm it's runnable
 
-      - name: Start o11 Binary & Verify Web on 1234
+      - name: Test o11 Binary (Foreground Crash Check)
         run: |
           cd o11-OTT-v2.2b1
-          nohup ./o11_v22b1-DRMStuff > o11.log 2>&1 &
-          echo "o11 started in background (PID: $!)"
-          sleep 45  # Extra time for HTTP server to bind
+          echo "=== Running o11 FOREGROUND for 15 seconds to catch crash ==="
+          timeout --preserve-status 15s ./o11_v22b1-DRMStuff || true
+          echo "Foreground test done. Exit code was $?"
 
-          echo "=== Listening Ports ==="
-          sudo netstat -tuln | grep 1234 || sudo ss -tuln | grep 1234 || echo "Port 1234 not detected yet"
-
-          echo "=== Local Curl Test to Web UI ==="
-          curl -v http://localhost:1234 || echo "Local curl failed - check o11.log"
-
-          echo "=== Recent o11 Logs ==="
-          tail -n 60 o11.log || cat o11.log
-
-      - name: Setup Bore Tunnel for Public Access to Port 1234
+      - name: Launch o11 in Background & Verify Web Server
         run: |
-          # Download latest bore binary (v0.6.0 as of 2025/2026 releases)
+          cd o11-OTT-v2.2b1
+          # Force log file so tail doesn't fail later
+          touch o11.log
+          chmod 666 o11.log
+
+          # Launch in background
+          nohup ./o11_v22b1-DRMStuff > o11.log 2>&1 &
+          echo "o11 launched in background - PID: $!"
+          sleep 60  # Give it time to start or crash
+
+          echo "=== Listening Ports (looking for 1234) ==="
+          sudo netstat -tuln | grep 1234 || sudo ss -tuln | grep 1234 || echo "No port 1234 detected"
+
+          echo "=== Local Curl Test to http://localhost:1234 ==="
+          curl -v http://localhost:1234 --max-time 10 || echo "Curl failed - panel not up"
+
+          echo "=== o11 Process Check ==="
+          ps aux | grep -i o11 || echo "o11 process NOT running - it died"
+
+          echo "=== First 100 lines of o11.log (startup/crash info) ==="
+          cat o11.log | head -n 100 || echo "Log is empty - binary wrote nothing"
+
+          echo "=== Last 50 lines of o11.log (most recent output) ==="
+          tail -n 50 o11.log || echo "Still no log"
+
+      - name: Setup Bore Tunnel - Expose Port 1234 Publicly
+        run: |
+          # Download bore v0.6.0 (latest stable as of 2026)
           wget https://github.com/ekzhang/bore/releases/download/v0.6.0/bore-v0.6.0-x86_64-unknown-linux-musl.tar.gz -O bore.tar.gz
           tar -xzf bore.tar.gz
           chmod +x bore
 
-          # Start tunnel: expose local 1234 to bore.pub (random remote port)
+          # Start tunnel
           nohup ./bore local 1234 --to bore.pub > tunnel.log 2>&1 &
-          echo "Bore tunnel started"
-          sleep 15  # Wait for connection/handshake
+          echo "Bore tunnel launched"
+          sleep 20  # Wait for handshake
 
-          echo "=== Bore Tunnel Output / Public URL ==="
-          cat tunnel.log | grep -i "listening" || cat tunnel.log  # Look for line like "Listening at bore.pub:xxxxx"
+          echo "=== Bore Tunnel Status & Public URL ==="
+          cat tunnel.log | grep -i "listening" || cat tunnel.log || echo "No tunnel output - bore failed"
 
-          # Optional: Try fixed remote port if random conflicts (uncomment if needed)
-          # nohup ./bore local 1234 --to bore.pub --port 8000 > tunnel.log 2>&1 &
+          echo "=== If you see 'Listening at bore.pub:XXXXX' above, open http://bore.pub:XXXXX in browser NOW ==="
 
-          # Keep job alive long enough to test (loops log dumps)
-          for i in {1..300}; do 
-            sleep 60
-            echo "=== Alive check - minute $i ==="
-            tail -n 20 o11.log
-            cat tunnel.log | tail -n 5
+      - name: Keep Job Alive & Monitor (up to ~6 hours)
+        run: |
+          echo "Monitoring loop started - will dump status every 2 minutes"
+          for i in {1..180}; do
+            sleep 120
+            echo "=== Alive check - minute $((i*2)) ==="
+            echo "o11 process:"
+            ps aux | grep -i o11 || echo "o11 dead"
+            echo "Bore process:"
+            ps aux | grep bore || echo "Bore dead"
+            echo "Recent o11 logs:"
+            tail -n 30 o11.log || echo "No o11.log"
+            echo "Tunnel status:"
+            tail -n 10 tunnel.log || echo "No tunnel.log"
+            echo "Ports again:"
+            sudo netstat -tuln | grep 1234 || echo "No 1234"
           done
 
-      - name: Final Cleanup (Always)
+      - name: Cleanup on Exit (always runs)
         if: always()
         run: |
-          echo "Workflow ending - kill processes"
+          echo "=== Workflow ending - killing leftovers ==="
           pkill -f o11_v22b1-DRMStuff || true
           pkill -f bore || true
-          echo "Check full logs above for bore.pub link!"
+          echo "Check all logs above for clues. Bore URL should be in 'Bore Tunnel Status' step."
