@@ -1,0 +1,71 @@
+name: Run o11 OTT Cracker with Bore Tunnel
+
+on:
+  workflow_dispatch:  # Manual trigger
+
+jobs:
+  launch-and-tunnel:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360  # Max 6 hrs
+
+    steps:
+      - name: Install Required Packages
+        run: |
+          sudo apt update -y
+          sudo apt install -y git wget curl net-tools procps
+
+      - name: Clone & Make Binary Executable
+        run: |
+          git clone https://github.com/DRMStuff/o11-OTT-v2.2b1.git
+          cd o11-OTT-v2.2b1
+          chmod +x o11_v22b1-DRMStuff
+
+      - name: Start o11 Binary & Verify Web on 1234
+        run: |
+          cd o11-OTT-v2.2b1
+          nohup ./o11_v22b1-DRMStuff > o11.log 2>&1 &
+          echo "o11 started in background (PID: $!)"
+          sleep 45  # Extra time for HTTP server to bind
+
+          echo "=== Listening Ports ==="
+          sudo netstat -tuln | grep 1234 || sudo ss -tuln | grep 1234 || echo "Port 1234 not detected yet"
+
+          echo "=== Local Curl Test to Web UI ==="
+          curl -v http://localhost:1234 || echo "Local curl failed - check o11.log"
+
+          echo "=== Recent o11 Logs ==="
+          tail -n 60 o11.log || cat o11.log
+
+      - name: Setup Bore Tunnel for Public Access to Port 1234
+        run: |
+          # Download latest bore binary (v0.6.0 as of 2025/2026 releases)
+          wget https://github.com/ekzhang/bore/releases/download/v0.6.0/bore-v0.6.0-x86_64-unknown-linux-musl.tar.gz -O bore.tar.gz
+          tar -xzf bore.tar.gz
+          chmod +x bore
+
+          # Start tunnel: expose local 1234 to bore.pub (random remote port)
+          nohup ./bore local 1234 --to bore.pub > tunnel.log 2>&1 &
+          echo "Bore tunnel started"
+          sleep 15  # Wait for connection/handshake
+
+          echo "=== Bore Tunnel Output / Public URL ==="
+          cat tunnel.log | grep -i "listening" || cat tunnel.log  # Look for line like "Listening at bore.pub:xxxxx"
+
+          # Optional: Try fixed remote port if random conflicts (uncomment if needed)
+          # nohup ./bore local 1234 --to bore.pub --port 8000 > tunnel.log 2>&1 &
+
+          # Keep job alive long enough to test (loops log dumps)
+          for i in {1..300}; do 
+            sleep 60
+            echo "=== Alive check - minute $i ==="
+            tail -n 20 o11.log
+            cat tunnel.log | tail -n 5
+          done
+
+      - name: Final Cleanup (Always)
+        if: always()
+        run: |
+          echo "Workflow ending - kill processes"
+          pkill -f o11_v22b1-DRMStuff || true
+          pkill -f bore || true
+          echo "Check full logs above for bore.pub link!"
