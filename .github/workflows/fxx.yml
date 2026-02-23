@@ -1,0 +1,57 @@
+- name: تسجيل البث
+        run: |
+          MINUTES="${{ inputs.duration_minutes }}"
+          if ! [[ "\( MINUTES" =~ ^[0-9]+ \) ]] || [ "$MINUTES" -lt 5 ] || [ "$MINUTES" -gt 360 ]; then
+            echo "خطأ: المدة يجب أن تكون رقم بين 5 و 360"
+            exit 1
+          fi
+          DURATION_SECONDS=$(( MINUTES * 60 ))
+
+          OUTPUT="record_$(date +%Y%m%d_%H%M%S).ts"
+          LOGFILE="ffmpeg.log"
+
+          # ──────────────────────────────────────────────────────────────
+          # Browser-like headers – change UA/Referer as needed
+          # If you know the player page (e.g. from browser dev tools), set REFERER
+          # ──────────────────────────────────────────────────────────────
+          UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36"
+          REFERER=""  # مثال: "https://www.example.com/live-player" ← غيّر إذا عرفت الموقع
+
+          HEADERS="User-Agent: ${UA}\r\nAccept: application/vnd.apple.mpegurl,application/x-mpegURL,video/MP2T,*/*\r\nAccept-Language: en-US,en;q=0.9,ar;q=0.8\r\n"
+          [ -n "\( REFERER" ] && HEADERS=" \){HEADERS}Referer: ${REFERER}\r\n"
+
+          echo "جاري التسجيل لمدة ${MINUTES} دقيقة..."
+          echo "الملف: ${OUTPUT}"
+          echo "Headers المستخدمة: ${HEADERS}"
+
+          # Optional: retry up to 3 times if fails quickly (token timing issues)
+          for attempt in {1..3}; do
+            echo "محاولة ${attempt}/3..."
+
+            timeout 30s ffmpeg -headers "${HEADERS}" \
+              -i "${{ inputs.m3u8_url }}" \
+              -t "$DURATION_SECONDS" \
+              -c copy \
+              -bsf:a aac_adtstoasc \  # يساعد مع بعض البثوث التي تكون AAC في ADTS
+              -y "$OUTPUT" 2>"$LOGFILE" || true
+
+            if [ -s "$OUTPUT" ] && [ $(stat -c%s "$OUTPUT") -gt 1048576 ]; then  # >1MB
+              echo "نجاح! الملف غير فارغ."
+              break
+            else
+              echo "فشل (محاولة ${attempt}) – حجم صغير أو فارغ"
+              cat "$LOGFILE"
+              rm -f "$OUTPUT"  # نظف الملف الفاشل
+              sleep 5  # انتظر قليلاً قبل إعادة المحاولة
+            fi
+          done
+
+          if [ ! -s "$OUTPUT" ] || [ $(stat -c%s "$OUTPUT") -le 1048576 ]; then
+            echo "فشل التسجيل بعد عدة محاولات (حجم الملف صفر أو صغير جداً)"
+            echo "=== آخر ffmpeg.log ==="
+            cat "$LOGFILE"
+            exit 1
+          fi
+
+          echo "output_file=$OUTPUT" >> $GITHUB_ENV
+          echo "size_mb=$(du -m "$OUTPUT" | cut -f1)" >> $GITHUB_ENV
