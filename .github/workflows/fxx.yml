@@ -22,49 +22,51 @@ jobs:
     steps:
       - name: تثبيت الأدوات اللازمة
         run: |
-          sudo apt update && sudo apt install -y ffmpeg
+          sudo apt update && sudo apt install -y ffmpeg yt-dlp  # yt-dlp as strong fallback if needed
           pip install internetarchive
 
       - name: تسجيل البث
         run: |
           MINUTES="${{ inputs.duration_minutes }}"
+
           if ! [[ "\( MINUTES" =~ ^[0-9]+ \) ]] || [ "$MINUTES" -lt 5 ] || [ "$MINUTES" -gt 360 ]; then
             echo "خطأ: المدة يجب أن تكون رقم بين 5 و 360"
             exit 1
           fi
+
           DURATION_SECONDS=$(( MINUTES * 60 ))
 
           OUTPUT="record_$(date +%Y%m%d_%H%M%S).ts"
           LOGFILE="ffmpeg.log"
 
-          # ──────────────────────────────────────────────────────────────
-          # Headers لتجنب 406: User-Agent حديث + Accept مناسب لـ HLS/m3u8
-          # إذا عرفت موقع البث/الـ player، ضع REFERER هنا (مثال: https://example.com/player)
-          # ──────────────────────────────────────────────────────────────
-          UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36"
-          REFERER=""  # ← غيّر إذا لزم الأمر، مثال: "https://www.souq-live.com/player"
+          # Headers to avoid 406: Recent UA + HLS-specific Accept
+          # Set REFERER to the actual player page if known (from browser Network tab)
+          UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36"
+          REFERER=""  # e.g., "https://souq-live.com/player" or the embedding site
 
-          HEADERS="User-Agent: ${UA}\r\nAccept: application/vnd.apple.mpegurl,application/x-mpegURL,video/MP2T,*/*\r\nAccept-Language: en-US,en;q=0.9,ar;q=0.8\r\n"
-          [ -n "\( REFERER" ] && HEADERS=" \){HEADERS}Referer: ${REFERER}\r\n"
+          HEADERS="User-Agent: ${UA}\r\nAccept: application/vnd.apple.mpegurl,application/x-mpegURL,video/MP2T,*/*\r\nAccept-Language: en-US,en;q=0.9,ar;q=0.8\r\nConnection: keep-alive\r\n"
+          if [ -n "$REFERER" ]; then
+            HEADERS="${HEADERS}Referer: ${REFERER}\r\n"
+          fi
 
           echo "جاري التسجيل لمدة ${MINUTES} دقيقة..."
           echo "الملف الناتج: ${OUTPUT}"
           echo "Headers المرسلة: ${HEADERS}"
 
-          # محاولات متعددة (للتعامل مع توكنات مؤقتة أو انقطاع مؤقت)
           SUCCESS=false
           for attempt in {1..3}; do
             echo "محاولة ${attempt}/3..."
 
-            timeout 60s ffmpeg -headers "${HEADERS}" \
+            timeout 90s ffmpeg -headers "${HEADERS}" \
               -i "${{ inputs.m3u8_url }}" \
               -t "$DURATION_SECONDS" \
               -c copy \
               -bsf:a aac_adtstoasc \
+              -http_seekable 0 \
               -y "$OUTPUT" 2>"$LOGFILE" || true
 
-            if [ -s "$OUTPUT" ] && [ $(stat -c%s "$OUTPUT") -gt 1048576 ]; then  # > 1MB
-              echo "نجاح! الملف صالح."
+            if [ -s "$OUTPUT" ] && [ $(stat -c%s "$OUTPUT") -gt 1048576 ]; then
+              echo "نجاح! الملف صالح (>1MB)."
               SUCCESS=true
               break
             else
@@ -76,10 +78,23 @@ jobs:
           done
 
           if [ "$SUCCESS" != "true" ]; then
-            echo "فشل التسجيل بعد 3 محاولات"
-            echo "=== آخر log من ffmpeg ==="
-            cat "$LOGFILE"
-            exit 1
+            echo "فشل FFmpeg بعد 3 محاولات – جاري تجربة yt-dlp كبديل..."
+            # Fallback to yt-dlp (often better at protected HLS)
+            yt-dlp --user-agent "$UA" \
+              --add-header "Accept: application/vnd.apple.mpegurl,application/x-mpegURL,video/MP2T,*/*" \
+              --add-header "Accept-Language: en-US,en;q=0.9,ar;q=0.8" \
+              --referer "$REFERER" \
+              --hls-use-mpegts --no-part --hls-prefer-ffmpeg \
+              -o "\( OUTPUT" " \){{ inputs.m3u8_url }}" 2>"$LOGFILE" || true
+
+            if [ -s "$OUTPUT" ] && [ $(stat -c%s "$OUTPUT") -gt 1048576 ]; then
+              echo "نجاح مع yt-dlp!"
+              SUCCESS=true
+            else
+              echo "فشل yt-dlp أيضاً"
+              cat "$LOGFILE"
+              exit 1
+            fi
           fi
 
           echo "output_file=$OUTPUT" >> $GITHUB_ENV
@@ -128,10 +143,10 @@ jobs:
           echo "══════════════════════════════════════════════════════"
           echo "الحجم          : ${{ env.size_mb }} MB"
           echo "المدة          : ${{ inputs.duration_minutes }} دقيقة"
-          echo "المعرف         : ${{ env.identifier }}"
-          echo "رابط العرض     : https://archive.org/details/${{ env.identifier }}"
-          echo "رابط التحميل   : https://archive.org/download/\( {{ env.identifier }}/ \){{ env.output_file }}"
+          echo "المعرف         : ${{ env.identifier || 'غير متوفر' }}"
+          echo "رابط العرض     : https://archive.org/details/${{ env.identifier || 'غير متوفر' }}"
+          echo "رابط التحميل   : https://archive.org/download/\( {{ env.identifier || 'غير متوفر' }}/ \){{ env.output_file || 'غير متوفر' }}"
           echo "══════════════════════════════════════════════════════"
           echo ""
-          echo "ملاحظة: التسجيلات الطويلة قد تحتاج وقتاً للمعالجة على archive.org (10–60 دقيقة)"
-          echo "إذا استمر الخطأ 406، جرب إضافة Referer صحيح أو شغل محلياً بدلاً من GitHub."
+          echo "ملاحظة: إذا استمر 406، افتح الرابط في المتصفح (F12 → Network)، انسخ Referer من طلب .m3u8 وضعه في REFERER، أو شغل محلياً من نيويورك."
+          echo "yt-dlp غالباً يحل مشاكل التوكن/الحماية أفضل."
