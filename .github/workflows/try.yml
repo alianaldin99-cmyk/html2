@@ -1,4 +1,4 @@
-name: Record IPTV m3u8 → Internet Archive (Playlist واحدة)
+name: Record IPTV m3u8 → Internet Archive (بـ VLC)
 
 on:
   workflow_dispatch:
@@ -20,32 +20,36 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 400
     steps:
-      - name: تثبيت الأدوات اللازمة
+      - name: تثبيت VLC و الأدوات اللازمة
         run: |
-          sudo apt update && sudo apt install -y ffmpeg
+          sudo apt update
+          sudo apt install -y vlc ffmpeg  # ffmpeg احتياطي لو احتجناه لاحقاً
           pip install --upgrade internetarchive
 
-      - name: تسجيل البث (مع headers لتجنب 406 Not Acceptable)
+      - name: تسجيل البث بـ cvlc (VLC command-line)
         run: |
           MINUTES="${{ inputs.duration_minutes }}"
           DURATION_SECONDS=$(( MINUTES * 60 ))
 
           OUTPUT="record_$(date +%Y%m%d_%H%M%S).ts"
 
-          ffmpeg \
-            -headers $'User-Agent: Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Mobile Safari/537.36\r\nReferer: http://24.mhpro1.xyz/\r\nOrigin: http://24.mhpro1.xyz\r\nAccept: */*\r\nAccept-Encoding: identity\r\nAccept-Language: en-US,en;q=0.9\r\nConnection: keep-alive\r\n' \
-            -i "${{ inputs.m3u8_url }}" \
-            -t "$DURATION_SECONDS" \
-            -c copy \
-            -bsf:a aac_adtstoasc \
-            -http_seekable 0 \
-            -timeout 60000000 \
-            -y "$OUTPUT" 2> ffmpeg.log || true
+          # استخدام cvlc للتسجيل مع headers لتجنب 406 أو 403
+          cvlc \
+            --http-user-agent="Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Mobile Safari/537.36" \
+            --http-referrer="http://24.mhpro1.xyz/" \
+            "${{ inputs.m3u8_url }}" \
+            --sout="#std{access=file,mux=ts,dst=$OUTPUT}" \
+            --run-time=$DURATION_SECONDS \
+            --stop-time=$DURATION_SECONDS \
+            --no-video \
+            --no-audio-display \
+            --quiet \
+            vlc://quit 2> vlc.log || true
 
           if [ ! -s "$OUTPUT" ]; then
             echo "فشل التسجيل - الملف فارغ أو حجم صفر"
-            echo "الخطأ من ffmpeg:"
-            cat ffmpeg.log
+            echo "الخطأ من cvlc:"
+            cat vlc.log
             exit 1
           fi
 
@@ -62,15 +66,15 @@ jobs:
           import os
           from datetime import datetime
 
-          FIXED_IDENTIFIER = "m3u8-tasjilat-mohamed-2026"  # غيّره لو عايز
+          FIXED_IDENTIFIER = "m3u8-tasjilat-mohamed-2026"  # غيّره لو عايز اسم مختلف
 
           file_path = os.environ.get('output_file', 'record_error.ts')
 
           file_title = "${{ inputs.title }}" or f"تسجيل {datetime.now().strftime('%Y-%m-%d %H:%M')} – ${{ inputs.duration_minutes }} د"
 
           metadata = {
-              'title': 'مجموعة تسجيلات IPTV m3u8 – Playlist واحدة',
-              'description': 'تسجيلات من روابط IPTV/Xtream Codes – يتم إضافتها تدريجياً',
+              'title': 'مجموعة تسجيلات IPTV – Playlist واحدة',
+              'description': 'تسجيلات من روابط IPTV/Xtream Codes باستخدام VLC',
               'mediatype': 'movies',
               'collection': 'opensource_movies',
               'subject': ['iptv', 'm3u8', 'xtream', 'livestream', 'recording'],
@@ -78,7 +82,6 @@ jobs:
           }
 
           print(f"جاري الرفع إلى: {FIXED_IDENTIFIER}")
-          print(f"اسم الملف: {file_title}")
 
           try:
               responses = upload(
@@ -115,10 +118,10 @@ jobs:
           echo "الصفحة              : https://archive.org/details/${{ env.identifier }}"
           echo "رابط التحميل       : https://archive.org/download/\( {{ env.identifier }}/ \){{ env.output_file }}"
           echo ""
-          echo "→ انتظر 10–60 دقيقة بعد الرفع عشان يظهر في الـ player وقائمة الملفات."
+          echo "→ انتظر 10–60 دقيقة بعد الرفع عشان يظهر في الـ player."
           echo "═══════════════════════════════════════════════════════════════"
           echo ""
-          if [ -f ffmpeg.log ]; then
-            echo "آخر جزء من ffmpeg.log (للتشخيص):"
-            tail -n 20 ffmpeg.log
+          if [ -f vlc.log ]; then
+            echo "آخر جزء من vlc.log (للتشخيص):"
+            tail -n 20 vlc.log
           fi
