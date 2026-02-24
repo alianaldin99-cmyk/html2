@@ -1,57 +1,4 @@
-name: Record m3u8 → Internet Archive (Playlist Mode)
-
-on:
-  workflow_dispatch:
-    inputs:
-      m3u8_url:
-        description: 'رابط m3u8'
-        required: true
-      duration_minutes:
-        description: 'مدة التسجيل بالدقايق (5–360 دقيقة)'
-        required: true
-        default: '10'
-      title:
-        description: 'عنوان التسجيل (اختياري)'
-        required: false
-        default: 'تسجيل بث مباشر'
-      playlist_identifier:          # ← الجديد
-        description: 'اسم الـ playlist / identifier (مثال: my-tv-channel-recordings)'
-        required: true
-        default: 'my-livestream-recordings'
-
-jobs:
-  record-and-upload:
-    runs-on: ubuntu-latest
-    timeout-minutes: 360
-    steps:
-      - name: تثبيت الأدوات
-        run: |
-          sudo apt update && sudo apt install -y ffmpeg
-          pip install internetarchive
-
-      - name: تسجيل البث
-        run: |
-          MINUTES="${{ inputs.duration_minutes }}"
-          DURATION_SECONDS=$(( MINUTES * 60 ))
-
-          # نستخدم اسم ملف واضح يبين التاريخ والمدة
-          OUTPUT="record_\( (date +%Y%m%d_%H%M%S)_ \){MINUTES}min.ts"
-
-          ffmpeg -i "${{ inputs.m3u8_url }}" \
-            -t "$DURATION_SECONDS" \
-            -c copy \
-            -y "$OUTPUT" 2> ffmpeg.log || true
-
-          if [ ! -s "$OUTPUT" ]; then
-            echo "فشل التسجيل (حجم الملف صفر)"
-            cat ffmpeg.log
-            exit 1
-          fi
-
-          echo "output_file=$OUTPUT" >> $GITHUB_ENV
-          echo "size_mb=$(du -m "$OUTPUT" | cut -f1)" >> $GITHUB_ENV
-
-      - name: رفع إلى Internet Archive (نفس الـ identifier)
+- name: رفع إلى Internet Archive (نفس الصفحة دايماً)
         env:
           S3_ACCESS_KEY: ${{ secrets.S3_ACCESS_KEY }}
           S3_SECRET_KEY: ${{ secrets.S3_SECRET_KEY }}
@@ -59,55 +6,42 @@ jobs:
           python - <<EOF
           from internetarchive import upload, get_item
           import os
-          from datetime import datetime
+          from datetime import date
 
-          identifier = "${{ inputs.playlist_identifier }}"
+          # ← غير ده لاسم ثابت تحبه (حروف صغيرة، - أو _ فقط)
+          FIXED_IDENTIFIER = "m3u8-live-recordings-mohamed"  
 
           file_path = "${{ env.output_file }}"
 
-          # عنوان الفيديو الواحد (هيظهر في الـ playlist)
-          segment_title = "\( {{ inputs.title }}" or f"تسجيل {datetime.now().strftime('%Y-%m-%d %H:%M')} – \){{ inputs.duration_minutes }} دقيقة"
+          # عنوان الفيديو داخل الصفحة (هيظهر في القائمة)
+          file_title = "${{ inputs.title }}" or f"تسجيل {date.today().strftime('%Y-%m-%d')} - ${{ inputs.duration_minutes }} دقيقة"
 
+          # metadata عامة للـ item (بتطبق مرة واحدة بس)
           metadata = {
-              'title': segment_title,           # عنوان الـ segment الواحد
-              'description': f'تسجيل مدة ${{ inputs.duration_minutes }} دقيقة من بث m3u8\\nPlaylist: {identifier}',
+              'title': 'تسجيلات بث مباشر m3u8 - مجموعة',
+              'description': 'مجموعة تسجيلات من بثوث m3u8 مختلفة',
               'mediatype': 'movies',
               'collection': 'opensource_movies',
-              'subject': 'livestream;m3u8;recording;playlist',
-              # لو عايز تضيف رقم الحلقة أو ترتيب → ممكن تضيف custom field
+              'subject': 'livestream;m3u8;recording;playlist'
           }
 
-          print(f"جاري الرفع إلى الـ identifier الموجود: {identifier}")
+          print(f"جاري الرفع إلى: {FIXED_IDENTIFIER}")
 
-          # نرفع الملف الجديد لنفس الـ item
-          r = upload(identifier, files=[file_path], metadata=metadata,
-                     access_key=os.environ['S3_ACCESS_KEY'],
-                     secret_key=os.environ['S3_SECRET_KEY'],
-                     verbose=True)
+          # الرفع (لو الـ item موجود → بيضيف الملف، لو مش موجود → بيعمله)
+          r = upload(
+              FIXED_IDENTIFIER,
+              files=[{'name': file_path, 'title': file_title}],  # ← مهم: title لكل ملف
+              metadata=metadata,   # بيتجاهل لو الـ item موجود أصلاً
+              access_key=os.environ['S3_ACCESS_KEY'],
+              secret_key=os.environ['S3_SECRET_KEY'],
+              verbose=True
+          )
 
-          if r[0].status_code in [200, 201]:
-              print("تم الرفع بنجاح → سيظهر في الـ playlist بعد derive")
+          if r and r[0].status_code in [200, 201]:
+              print("تم الرفع بنجاح ✓")
           else:
-              print("فشل الرفع:", r[0].status_code, r[0].text)
-              exit(1)
+              print("فشل الرفع:", r)
 
           with open(os.environ['GITHUB_ENV'], 'a') as f:
-              f.write(f"identifier={identifier}\\n")
+              f.write(f"identifier={FIXED_IDENTIFIER}\n")
           EOF
-
-      - name: عرض النتيجة النهائية
-        if: always()
-        run: |
-          echo ""
-          echo "══════════════════════════════════════════════════════"
-          echo "الحجم          : ${{ env.size_mb }} MB"
-          echo "المدة          : ${{ inputs.duration_minutes }} دقيقة"
-          echo "اسم الـ Playlist : ${{ inputs.playlist_identifier }}"
-          echo "رابط الصفحة     : https://archive.org/details/${{ env.identifier }}"
-          echo "رابط التحميل    : https://archive.org/download/\( {{ env.identifier }}/ \){{ env.output_file }}"
-          echo "══════════════════════════════════════════════════════"
-          echo ""
-          echo "ملاحظة مهمة:"
-          echo "• كل تسجيل جديد هيتضاف كملف منفصل في نفس الصفحة"
-          echo "• انتظر 10–60 دقيقة بعد الرفع عشان الـ derive يخلّص والـ playlist تظهر كاملة"
-          echo "• لو عايز تغيّر ترتيب الملفات أو العناوين → ادخل على الصفحة وعدّل يدوي"
