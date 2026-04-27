@@ -1,4 +1,4 @@
-name: Record m3u8 → Internet Archive (كـ Playlist واحدة)
+name: Record m3u8 → Internet Archive (كـ Playlist with latency واحدة)
 
 on:
   workflow_dispatch:
