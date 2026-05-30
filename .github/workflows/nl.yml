@@ -1,0 +1,114 @@
+name: Record m3u8 → Internet Archive (تسجيل نظيف - حدث مهم)
+
+on:
+  workflow_dispatch:
+    inputs:
+      m3u8_url:
+        description: 'رابط m3u8'
+        required: true
+      duration_minutes:
+        description: 'مدة التسجيل بالدقايق (5–360)'
+        required: true
+        default: '60'
+      title:
+        description: 'عنوان التسجيل'
+        required: false
+        default: 'تسجيل حدث مهم'
+
+jobs:
+  record-and-upload:
+    runs-on: ubuntu-latest
+    timeout-minutes: 480
+
+    steps:
+      - name: تثبيت الأدوات
+        run: |
+          sudo apt update && sudo apt install -y ffmpeg
+          pip install --upgrade internetarchive
+
+      - name: تسجيل البث (وضع نظيف جداً - مخبأ 10000 ms)
+        run: |
+          MINUTES="${{ inputs.duration_minutes }}"
+          DURATION_SECONDS=$((MINUTES * 60))
+
+          OUTPUT_FILE="record_$(date +%Y%m%d_%H%M%S).ts"
+
+          echo "بدء تسجيل حدث مهم لمدة ${MINUTES} دقيقة - وضع نظيف..."
+
+          ffmpeg \
+            -fflags +genpts+discardcorrupt+igndts \
+            -rw_timeout 60000000 \
+            -timeout 60000000 \
+            -reconnect 1 \
+            -reconnect_streamed 1 \
+            -reconnect_delay_max 20 \
+            -reconnect_at_eof 1 \
+            -i "${{ inputs.m3u8_url }}" \
+            -buffer_size 128M \
+            -max_delay 10000000 \           # 10000 ms (كما طلبت)
+            -muxdelay 0 \
+            -muxpreload 0 \
+            -use_wallclock_as_timestamps 1 \
+            -avoid_negative_ts make_zero \
+            -vsync 0 \
+            -async 1 \
+            -err_detect ignore_err \
+            -t "$DURATION_SECONDS" \
+            -c copy \
+            -y "$OUTPUT_FILE" 2> ffmpeg.log || true
+
+          # فحص دقيق للملف
+          if [ ! -s "$OUTPUT_FILE" ] || [ $(stat -c %s "$OUTPUT_FILE") -lt 5000000 ]; then
+            echo "⚠️ تحذير: الملف صغير جداً أو فشل التسجيل"
+            cat ffmpeg.log
+          else
+            echo "✅ تم التسجيل بنجاح"
+            echo "حجم الملف: $(du -h "$OUTPUT_FILE" | cut -f1)"
+          fi
+
+          echo "output_file=$OUTPUT_FILE" >> $GITHUB_ENV
+          echo "size_mb=$(du -m "$OUTPUT_FILE" | cut -f1)" >> $GITHUB_ENV
+
+      - name: رفع إلى Internet Archive
+        env:
+          IA_ACCESS_KEY: ${{ secrets.S3_ACCESS_KEY }}
+          IA_SECRET_KEY: ${{ secrets.S3_SECRET_KEY }}
+        run: |
+          python3 - <<'EOF'
+          from internetarchive import upload
+          import os
+          from datetime import datetime
+
+          FIXED_IDENTIFIER = "m3u8-tasjilat-mohamed-2026"
+          file_path = os.environ.get('output_file')
+          file_title = "${{ inputs.title }}" or f"حدث مهم - ${datetime.now().strftime('%Y-%m-%d %H:%M')} - ${{ inputs.duration_minutes }} دقيقة"
+
+          metadata = {
+              'title': 'تسجيلات أحداث مهمة - جودة عالية',
+              'description': 'تسجيلات نظيفة لحدث مهم - Playlist ثابتة',
+              'mediatype': 'movies',
+              'collection': 'opensource_movies',
+              'creator': 'Mohamed',
+              'licenseurl': 'https://creativecommons.org/licenses/by-nc-sa/4.0/'
+          }
+
+          upload(
+              FIXED_IDENTIFIER,
+              files=[{'name': file_path, 'title': file_title}],
+              metadata=metadata,
+              access_key=os.environ['IA_ACCESS_KEY'],
+              secret_key=os.environ['IA_SECRET_KEY'],
+              verbose=True,
+              retries=5
+          )
+          print("✅ تم الرفع بنجاح")
+          EOF
+
+      - name: عرض النتيجة
+        if: always()
+        run: |
+          echo "═══════════════════════════════════════════════════════════════"
+          echo "المدة          : ${{ inputs.duration_minutes }} دقيقة"
+          echo "الحجم          : ${{ env.size_mb }} MB"
+          echo "الصفحة         : https://archive.org/details/m3u8-tasjilat-mohamed-2026"
+          echo "═══════════════════════════════════════════════════════════════"
