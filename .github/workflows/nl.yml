@@ -1,4 +1,4 @@
-name: Record m3u8 → Internet Archive (تسجيل نظيف - حدث مهم)
+name: Record m3u8 → Internet Archive (مخبأ 10000 ms فقط)
 
 on:
   workflow_dispatch:
@@ -7,7 +7,7 @@ on:
         description: 'رابط m3u8'
         required: true
       duration_minutes:
-        description: 'مدة التسجيل بالدقايق (5–360)'
+        description: 'مدة التسجيل بالدقايق'
         required: true
         default: '60'
       title:
@@ -26,44 +26,28 @@ jobs:
           sudo apt update && sudo apt install -y ffmpeg
           pip install --upgrade internetarchive
 
-      - name: تسجيل البث (وضع نظيف جداً - مخبأ 10000 ms)
+      - name: تسجيل البث (مخبأ 10000 ms فقط)
         run: |
           MINUTES="${{ inputs.duration_minutes }}"
           DURATION_SECONDS=$((MINUTES * 60))
 
           OUTPUT_FILE="record_$(date +%Y%m%d_%H%M%S).ts"
 
-          echo "بدء تسجيل حدث مهم لمدة ${MINUTES} دقيقة - وضع نظيف..."
+          echo "بدء التسجيل لمدة ${MINUTES} دقيقة - مخبأ 10000 ms فقط"
 
           ffmpeg \
-            -fflags +genpts+discardcorrupt+igndts \
-            -rw_timeout 60000000 \
-            -timeout 60000000 \
-            -reconnect 1 \
-            -reconnect_streamed 1 \
-            -reconnect_delay_max 20 \
-            -reconnect_at_eof 1 \
             -i "${{ inputs.m3u8_url }}" \
-            -buffer_size 128M \
-            -max_delay 10000000 \           # 10000 ms (كما طلبت)
-            -muxdelay 0 \
-            -muxpreload 0 \
-            -use_wallclock_as_timestamps 1 \
-            -avoid_negative_ts make_zero \
-            -vsync 0 \
-            -async 1 \
-            -err_detect ignore_err \
+            -max_delay 10000000 \          # ← 10000 ms فقط (كما طلبت)
             -t "$DURATION_SECONDS" \
             -c copy \
             -y "$OUTPUT_FILE" 2> ffmpeg.log || true
 
-          # فحص دقيق للملف
-          if [ ! -s "$OUTPUT_FILE" ] || [ $(stat -c %s "$OUTPUT_FILE") -lt 5000000 ]; then
-            echo "⚠️ تحذير: الملف صغير جداً أو فشل التسجيل"
+          # فحص الملف
+          if [ ! -s "$OUTPUT_FILE" ] || [ $(stat -c %s "$OUTPUT_FILE") -lt 1000000 ]; then
+            echo "⚠️ تحذير: الملف فارغ أو صغير"
             cat ffmpeg.log
           else
             echo "✅ تم التسجيل بنجاح"
-            echo "حجم الملف: $(du -h "$OUTPUT_FILE" | cut -f1)"
           fi
 
           echo "output_file=$OUTPUT_FILE" >> $GITHUB_ENV
@@ -81,15 +65,14 @@ jobs:
 
           FIXED_IDENTIFIER = "m3u8-tasjilat-mohamed-2026"
           file_path = os.environ.get('output_file')
-          file_title = "${{ inputs.title }}" or f"حدث مهم - ${datetime.now().strftime('%Y-%m-%d %H:%M')} - ${{ inputs.duration_minutes }} دقيقة"
+          file_title = "${{ inputs.title }}" or f"تسجيل ${datetime.now().strftime('%Y-%m-%d %H:%M')}"
 
           metadata = {
-              'title': 'تسجيلات أحداث مهمة - جودة عالية',
-              'description': 'تسجيلات نظيفة لحدث مهم - Playlist ثابتة',
+              'title': 'تسجيلات أحداث مهمة',
+              'description': 'تسجيل m3u8 - Playlist ثابتة',
               'mediatype': 'movies',
               'collection': 'opensource_movies',
-              'creator': 'Mohamed',
-              'licenseurl': 'https://creativecommons.org/licenses/by-nc-sa/4.0/'
+              'creator': 'Mohamed'
           }
 
           upload(
@@ -99,16 +82,16 @@ jobs:
               access_key=os.environ['IA_ACCESS_KEY'],
               secret_key=os.environ['IA_SECRET_KEY'],
               verbose=True,
-              retries=5
+              retries=3
           )
-          print("✅ تم الرفع بنجاح")
+          print("✅ تم الرفع")
           EOF
 
       - name: عرض النتيجة
         if: always()
         run: |
           echo "═══════════════════════════════════════════════════════════════"
-          echo "المدة          : ${{ inputs.duration_minutes }} دقيقة"
-          echo "الحجم          : ${{ env.size_mb }} MB"
-          echo "الصفحة         : https://archive.org/details/m3u8-tasjilat-mohamed-2026"
+          echo "المدة   : ${{ inputs.duration_minutes }} دقيقة"
+          echo "الحجم   : ${{ env.size_mb }} MB"
+          echo "الرابط  : https://archive.org/details/m3u8-tasjilat-mohamed-2026"
           echo "═══════════════════════════════════════════════════════════════"
