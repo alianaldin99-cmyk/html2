@@ -49,19 +49,19 @@ jobs:
           S3_ACCESS_KEY: ${{ secrets.S3_ACCESS_KEY }}
           S3_SECRET_KEY: ${{ secrets.S3_SECRET_KEY }}
         run: |
-          python - <<EOF
+          python - <<'EOF'
           from internetarchive import upload
           import os
-          from datetime import date
+          from datetime import datetime
 
-          identifier = "record-\( (date +%Y%m%d-%H%M%S)- \){GITHUB_RUN_ID}"
-          file_path = "${{ env.output_file }}"
+          identifier = f"record-{datetime.now().strftime('%Y%m%d-%H%M%S')}-{os.environ.get('GITHUB_RUN_ID', 'manual')}"
+          file_path = os.environ["output_file"]
 
-          title = "${{ inputs.title }}" or "تسجيل تلقائي - $(date +%Y-%m-%d)"
+          title = """${{ inputs.title }}""" or f"تسجيل تلقائي - {datetime.now().strftime('%Y-%m-%d')}"
 
           metadata = {
               'title': title,
-              'description': f'تنزيل ملف عادي ثم رفعه',
+              'description': 'تنزيل ملف عادي ثم رفعه',
               'mediatype': 'movies',
               'collection': 'opensource_movies',
               'subject': 'video;download;recording'
@@ -69,15 +69,22 @@ jobs:
 
           print(f"برفع بمعرف: {identifier}")
 
-          r = upload(identifier, files=[file_path], metadata=metadata, access_key=os.environ['S3_ACCESS_KEY'], secret_key=os.environ['S3_SECRET_KEY'])
+          r = upload(
+              identifier,
+              files=[file_path],
+              metadata=metadata,
+              access_key=os.environ['S3_ACCESS_KEY'],
+              secret_key=os.environ['S3_SECRET_KEY']
+          )
 
           if r[0].status_code == 200:
-              print("رفعت المتعة بنجاح يا ولدي 💦")
+              print("رفعت بنجاح")
           else:
               print("فشل الرفع:", r[0].status_code, r[0].text)
+              raise SystemExit(1)
 
           with open(os.environ['GITHUB_ENV'], 'a') as f:
-              f.write(f"identifier={identifier}\\n")
+              f.write(f"identifier={identifier}\n")
           EOF
 
       - name: عرض النتيجة النهائية
