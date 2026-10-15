@@ -1,5 +1,5 @@
 
-name: vod
+name: up
 
 on:
   workflow_dispatch:
